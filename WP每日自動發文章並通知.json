@@ -1,0 +1,1060 @@
+{
+  "name": "WP每日自動發文章並通知",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -736,
+        -192
+      ],
+      "id": "615f316f-56a7-4b7d-bc5a-158d8fc51e36",
+      "name": "When clicking ‘Execute workflow’"
+    },
+    {
+      "parameters": {
+        "url": "https://example.com/wp-json/wp/v2/categories",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "wordpressApi",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        -480,
+        -192
+      ],
+      "id": "bbdf19ba-e870-4b05-8b9c-bdf8bb0e6ab2",
+      "name": "HTTP Request",
+      "credentials": {
+        "wordpressApi": {
+          "id": "mVkObqOlBXJkc3l8",
+          "name": "Wordpress account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "example",
+          "mode": "list",
+          "cachedResultName": "example SEO n8n發布",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/example/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "取得分類ID/更新數量",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/example/edit#gid=0"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "row_number": "=",
+            "數量": "={{ $json.count }}",
+            "分類": "={{ $json.name }}",
+            "IDs": "={{ $json.id }}"
+          },
+          "matchingColumns": [
+            "分類"
+          ],
+          "schema": [
+            {
+              "id": "分類",
+              "displayName": "分類",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "IDs",
+              "displayName": "IDs",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "數量",
+              "displayName": "數量",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "row_number",
+              "displayName": "row_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "readOnly": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        -272,
+        -192
+      ],
+      "id": "80be28a7-6cdf-4973-a39d-ec6d449f5a78",
+      "name": "Update row in sheet",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "DGZU6cXtAGuDvYyN",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// --- 1. 取得「Google Sheet」上的所有分類 ---\n// (注意！節點名稱 '找出各分類數量' 必須跟你的節點名稱一模一样)\nconst allSheetRows = $items('找出各分類數量').map(item => item.json);\n\n// --- 2. 排除「未分類」或不想發文的 ID ---\nconst excludeIds = [1, 158]; // <-- 在這裡加入不想發文的分類 ID\nconst filteredSheetRows = allSheetRows.filter(row => {\n    const id = Number(row.IDs);\n    // 確保有 ID、有數量，且不在排除清單中\n    return row.IDs != null && row.數量 != null && !excludeIds.includes(id);\n});\n\n// --- 3. 如果過濾後沒東西了，就停止 ---\nif (filteredSheetRows.length === 0) {\n  return { error: \"No categories found in Google Sheet (after filtering).\" };\n}\n\n// --- 4. 找出 \"數量\" (來自 Sheet) 最小的那一列 ---\nconst minSheetRow = filteredSheetRows.reduce((minRow, currentRow) => {\n  const countA = Number(minRow.數量) || 0;\n  const countB = Number(currentRow.數量) || 0;\n  return countB < countA ? currentRow : minRow;\n});\n\n// --- 5. 取得「勝利者」的 ID ---\nconst targetId = Number(minSheetRow.IDs);\n\n// --- 6. 取得「WordPress」的完整分類列表 ---\n// (注意！節點名稱 'HTTP Request' 必須跟你的節點名稱一模一样)\nconst allWPCategories = $items('HTTP Request').map(item => item.json);\nif (allWPCategories.length === 0) {\n    throw new Error(\"Node 'HTTP Request' did not return any categories.\");\n}\n\n// --- 7. (核心) 在 WP 列表中，找出 ID 相符的那筆「完整」資料 ---\nconst targetCategory = allWPCategories.find(category => category.id === targetId);\n\n// --- 8. 錯誤處理 ---\nif (!targetCategory) {\n  throw new Error(`Error: Sheet found min ID ${targetId}, but this ID was not found in the WordPress 'HTTP Request' data.`);\n}\n\n// --- 9. 回傳跟舊節點一樣的格式，Gemini 節點才能無痛接軌 ---\nreturn { \n  message: `Successfully found weakest category from Google Sheet: ${targetCategory.name}`,\n  target_category: targetCategory,\n  target_category_name: targetCategory.name,\n  target_category_id: targetCategory.id,\n  post_count: targetCategory.count // 這是 WP 上的即時 count\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        112,
+        -192
+      ],
+      "id": "a8e84eb3-5840-4dc9-8a0e-0f96a127bd58",
+      "name": "篩選文章數量最少"
+    },
+    {
+      "parameters": {
+        "jsCode": "// 1. 抓取 Gemini 吐出來的「文字保溫箱」\nconst geminiOutputString = $json.content.parts[0].text;\n\n// 2. (NEW) 抓出 { ... } 之間的 JSON 內容\n//    這能順便清掉 Gemini 可能多加的 ```json ... ``` 或其他文字\nconst match = geminiOutputString.match(/\\{[\\s\\S]*\\}/);\n\nif (!match) {\n  throw new Error(\"在 Gemini 輸出中找不到有效的 JSON 物件 { ... }。\");\n}\n\nlet jsonString = match[0];\n\n// 3. (NEW) 處理 \"Bad control character\" (非法換行符)\n//    我們把所有 \\n (換行), \\r (歸位), \\t (tab) 全部移除。\n//    這可能會讓你的 HTML 內容變成一大行，但 HTML 渲染時本來就會忽略它們，\n//    而且這能 100% 解決 JSON.parse 的問題。\njsonString = jsonString.replace(/(\\r\\n|\\n|\\r|\\t)/gm, \"\");\n\n// 4. 用 JavaScript 內建的 JSON.parse() 強制撬開\ntry {\n  const parsedJson = JSON.parse(jsonString);\n  \n  // 5. 把撬開的乾淨 JSON 回傳給下一個節點\n  return [{ json: parsedJson }];\n\n} catch (error) {\n  console.error(\"清理過的 JSON 仍然解析失敗。\");\n  console.error(\"失敗的字串:\", jsonString); // 在 n8n 的 console 檢查這串\n  throw new Error(`JSON 解析失敗: ${error.message}.`);\n}"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        688,
+        -192
+      ],
+      "id": "ea318ab3-5202-4639-a6d9-67a012a8f65c",
+      "name": "解析Gemini 分解為json"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.wavespeed.ai/api/v3/stability-ai/stable-diffusion-3.5-large-turbo",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "aspect_ratio",
+              "value": "1:1"
+            },
+            {
+              "name": "enable_base64_output",
+              "value": "false"
+            },
+            {
+              "name": "prompt",
+              "value": "={{ $('解析Gemini 分解為json').item.json.image_prompt }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        -272,
+        224
+      ],
+      "id": "ce64a293-d4aa-4ff2-8e9b-ee36bd6c561b",
+      "name": "生成文章精選圖片",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "mfJbgei5aVzE8QwJ",
+          "name": "Header Auth account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.data.outputs[0] }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        496,
+        224
+      ],
+      "id": "735d7c85-e36f-4b99-8f6e-1978b2e7403e",
+      "name": "下載圖片",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "mfJbgei5aVzE8QwJ",
+          "name": "Header Auth account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "amount": 30
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        -48,
+        224
+      ],
+      "id": "31a56742-abb9-41ed-b053-cc90d624e017",
+      "name": "Wait",
+      "webhookId": "510a0d1c-1ad3-4d52-b984-ccbe2c5fe1c8"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.data.status }}",
+                    "rightValue": "completed",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "1bc06ced-3256-4a4d-a720-fe78f46f831c"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "success"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "fe7755ec-3a58-419f-a2cf-ba1a7f15a7ab",
+                    "leftValue": "={{ $json.data.status }}",
+                    "rightValue": "processing",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "in progress"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.3,
+      "position": [
+        288,
+        224
+      ],
+      "id": "11336566-5e17-4555-89bc-2782c16c026c",
+      "name": "Switch"
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.data.urls.get }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        128,
+        224
+      ],
+      "id": "1b5459a6-f9b1-4eca-ad4b-8cdb198b7248",
+      "name": "取得圖片",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "mfJbgei5aVzE8QwJ",
+          "name": "Header Auth account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "title": "={{ $('解析Gemini 分解為json').item.json.title }}",
+        "additionalFields": {
+          "authorId": 2,
+          "content": "={{ $('解析Gemini 分解為json').item.json.content }}",
+          "slug": "={{ $('解析Gemini 分解為json').item.json.slug }}",
+          "status": "publish",
+          "commentStatus": "open",
+          "pingStatus": "open",
+          "categories": "={{ $('篩選文章數量最少').item.json.target_category.id }}",
+          "postTemplate": {
+            "values": {}
+          }
+        }
+      },
+      "type": "n8n-nodes-base.wordpress",
+      "typeVersion": 1,
+      "position": [
+        -736,
+        224
+      ],
+      "id": "4dfed917-4753-4437-90ca-3b568831833e",
+      "name": "發文",
+      "credentials": {
+        "wordpressApi": {
+          "id": "mVkObqOlBXJkc3l8",
+          "name": "Wordpress account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://example.com/wp-json/wp/v2/media",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "wordpressApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Disposition",
+              "value": "=attachment; filename=\"{{ $('解析Gemini 分解為json').item.json.slug }}.jpg\""
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "binaryData",
+        "inputDataFieldName": "data",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        720,
+        224
+      ],
+      "id": "d69d4d72-08db-4fea-a33c-1e4bcd9e948c",
+      "name": "上傳圖片",
+      "credentials": {
+        "wordpressApi": {
+          "id": "mVkObqOlBXJkc3l8",
+          "name": "Wordpress account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://example.com/wp-json/wp/v2/posts/{{ $('發文').first().json.id }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "wordpressApi",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "featured_media",
+              "value": "={{ $json.id }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        -720,
+        528
+      ],
+      "id": "53e37f68-e6e0-4396-a09a-f0eb3d7f49c8",
+      "name": "更新文章圖片",
+      "credentials": {
+        "wordpressApi": {
+          "id": "mVkObqOlBXJkc3l8",
+          "name": "Wordpress account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "example",
+          "mode": "list",
+          "cachedResultName": "example SEO n8n發布",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/example/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 976148295,
+          "mode": "list",
+          "cachedResultName": "文章列表",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/example/edit#gid=976148295"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "title": "={{ $json.title.raw }}",
+            "link": "={{ $json.guid.raw }}",
+            "categories": "={{ $json.categories[0] }}",
+            "content": "={{ $json.content.raw }}",
+            "slug": "={{ $json.slug }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "title",
+              "displayName": "title",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "content",
+              "displayName": "content",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "categories",
+              "displayName": "categories",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "link",
+              "displayName": "link",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "slug",
+              "displayName": "slug",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        -480,
+        224
+      ],
+      "id": "1373fab6-abd6-4fef-bb54-4718d05ffde6",
+      "name": "更新文章列表",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "DGZU6cXtAGuDvYyN",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "models/gemini-2.5-pro",
+          "mode": "list",
+          "cachedResultName": "models/gemini-2.5-pro"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "=// 1. 抓取上一個 Code 節點回傳的資料\nconst codeOutput = $json;\nconst targetCategory = codeOutput.target_category;\n\n// 2. 建立提示詞\nconst prompt = `\n【任務說明】\n你是一位頂尖的 SEO 內容創作者，請為分類「{{ $json.target_category.name }}」撰寫一篇高品質、高 SEO 分數的文章。\n網站風格：example.com（時尚、精緻、平價的 925 純銀飾品）。\n\n【嚴格的 SEO 撰寫規則】\n1.  **關鍵字 (Keyword):** 你必須先決定一個「單一的中文主要關鍵字」(focus_keyword)。\n2.  **標題 (Title):** 標題必須包含這個「focus_keyword」，最好是放在開頭。\n3.  **描述 (Meta Description):** 150 字的 Meta 描述，必須包含「focus_keyword」。\n4.  **網址 (Slug):** 英文 slug，必須包含「focus_keyword」的英文翻譯或拼音。\n5.  **內容 (Content):** 800～1000 字的 HTML 內容。\n6.  **內容規則 (Content Rules):**\n    * 「focus_keyword」必須出現在第一段（前 10%）。\n    * 「focus_keyword」必須至少在一個 H2 或 H3 標題中自然出現。\n    * 內容必須包含 1-2 個連到外部權威網站的 <a> 連結（例如時尚雜誌、珠寶保養教學）。\n    * 內容必須包含 1-2 個連到 example.com 網站內部的 <a> 連結（例如 /shop 或 /category/rings/）。\n\n【回傳格式】\n請嚴格以 JSON 格式回傳，不能包含任何多餘文字或註解。\n\n{\n  \"focus_keyword\": \"（請根據「{{ $json.target_category.name }}」決定一個「單一」的中文主要關鍵字）\",\n  \"title\": \"（請產生一個 SEO 標題，【必須包含】上方的 focus_keyword）\",\n  \"slug\": \"（請產生 SEO 友善的英文 slug，【必須包含】focus_keyword 的英文）\",\n  \"meta_description\": \"（請撰寫 150 字的 SEO Meta 描述，【必須包含】上方的 focus_keyword）\",\n  \"content\": \"（請撰寫 800～1000 字的 HTML 文章，並遵守【嚴格的 SEO 撰寫規則】中的所有內容規則）\",\n  \"image_prompt\": \"（請根據上面產生的「title」和「content」，撰寫一段 250 字以內、適合 Stable Diffusion 的英文 prompt。風格需符合：minimalist, elegant, high-quality, product photography, 925 sterling silver jewelry）\"\n}\n`;\n\n// 3. 回傳最終提示詞\nreturn prompt;"
+            }
+          ]
+        },
+        "jsonOutput": true,
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1,
+      "position": [
+        304,
+        -192
+      ],
+      "id": "9c3af9c4-6c73-4687-ba65-4e9dcc1899fd",
+      "name": "Message a model1",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "Of8f4xZgtdDWQIRT",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://example.com/wp-json/wp/v2/media/{{ $('上傳圖片').first().json.id }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "wordpressApi",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "alt_text",
+              "value": "={{ $('解析Gemini 分解為json').item.json.focus_keyword }}"
+            },
+            {
+              "name": "title",
+              "value": "={{ $('解析Gemini 分解為json').item.json.title }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        -32,
+        528
+      ],
+      "id": "8fe6f116-835e-4e85-8d3a-d42b659a887f",
+      "name": "更新文章圖片SEO",
+      "credentials": {
+        "wordpressApi": {
+          "id": "mVkObqOlBXJkc3l8",
+          "name": "Wordpress account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "=https://example.com/wp-json/wp/v2/posts/{{ $('發文').first().json.id }}?context=edit",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "wordpressApi",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        -256,
+        528
+      ],
+      "id": "3294b8b7-fbc4-4d20-916c-89699a627302",
+      "name": "HTTP Request1",
+      "credentials": {
+        "wordpressApi": {
+          "id": "mVkObqOlBXJkc3l8",
+          "name": "Wordpress account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "example",
+          "mode": "list",
+          "cachedResultName": "example SEO n8n發布",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/example/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "取得分類ID/更新數量",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/example/edit#gid=0"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        -80,
+        -192
+      ],
+      "id": "61a1e0ff-13dd-46bd-8b70-672006eaa190",
+      "name": "找出各分類數量",
+      "executeOnce": true,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "DGZU6cXtAGuDvYyN",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "example@gmail.com",
+        "subject": "=[example 自動發文]：{{ $('發文').item.json.title.raw }}",
+        "message": "=<h3>系統已自動發布新文章 (example.com)</h3>\n<p>哈囉，自動化流程剛剛發布了一篇新文章，請協助檢查內容是否正確。</p>\n<hr>\n\n<p><strong>文章標題：</strong><br>\n{{ $('發文').item.json.title.raw }}\n</p>\n\n<p><strong>發布分類：</strong><br>\n{{ $('篩選文章數量最少').item.json.target_category.name }}\n</p>\n\n<p><strong>Meta 描述：</strong><br>\n{{ $('解析Gemini 分解為json').item.json.meta_description }}\n</p>\n\n<hr>\n\n<p style=\"font-size: 16px;\">\n    <strong><a href=\"{{ $('發文').item.json.guid.raw }}\" target=\"_blank\">\n        👉 點此前往檢查文章\n    </a></strong>\n</p>\n",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        512,
+        528
+      ],
+      "id": "6cec7e7d-fac2-4250-9112-57c07289e435",
+      "name": "寄信通知",
+      "webhookId": "dc4b43c8-6325-426d-9c60-620c4421bf9b",
+      "executeOnce": true,
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "FJrhIG6eC5QW4MEP",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "https://example.com/wp-json/wp/v2/categories",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "wordpressApi",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        144,
+        528
+      ],
+      "id": "90386d92-b3ab-4844-88ce-233c01186d58",
+      "name": "抓取分類數量",
+      "credentials": {
+        "wordpressApi": {
+          "id": "mVkObqOlBXJkc3l8",
+          "name": "Wordpress account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "example",
+          "mode": "list",
+          "cachedResultName": "Example SEO n8n發布",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/example/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "取得分類ID/更新數量",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/example/edit#gid=0"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "row_number": "=",
+            "數量": "={{ $json.count }}",
+            "分類": "={{ $json.name }}",
+            "IDs": "={{ $json.id }}"
+          },
+          "matchingColumns": [
+            "分類"
+          ],
+          "schema": [
+            {
+              "id": "分類",
+              "displayName": "分類",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "IDs",
+              "displayName": "IDs",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "數量",
+              "displayName": "數量",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "row_number",
+              "displayName": "row_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "readOnly": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        320,
+        528
+      ],
+      "id": "e7a0b18c-feaf-4124-962c-e030c42d00f0",
+      "name": "更新分類數量",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "DGZU6cXtAGuDvYyN",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://example.com/wp-json/wp/v2/posts/{{ $('發文').first().json.id }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "wordpressApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "=\n{\n  \"meta\": {\n    \"rank_math_title\": \"{{ $('解析Gemini 分解為json').item.json.title }}\",\n    \"rank_math_description\": \"{{ $('解析Gemini 分解為json').item.json.meta_description }}\",\n    \"rank_math_focus_keyword\": \"{{ $('解析Gemini 分解為json').item.json.focus_keyword }}\"\n  }\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        -464,
+        528
+      ],
+      "id": "3edecf54-e671-42dd-bb08-06892c709f64",
+      "name": "更新文章RankMathSEO",
+      "credentials": {
+        "wordpressApi": {
+          "id": "mVkObqOlBXJkc3l8",
+          "name": "Wordpress account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "When clicking ‘Execute workflow’": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "Update row in sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update row in sheet": {
+      "main": [
+        [
+          {
+            "node": "找出各分類數量",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "篩選文章數量最少": {
+      "main": [
+        [
+          {
+            "node": "Message a model1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "解析Gemini 分解為json": {
+      "main": [
+        [
+          {
+            "node": "發文",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "生成文章精選圖片": {
+      "main": [
+        [
+          {
+            "node": "Wait",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "下載圖片": {
+      "main": [
+        [
+          {
+            "node": "上傳圖片",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait": {
+      "main": [
+        [
+          {
+            "node": "取得圖片",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch": {
+      "main": [
+        [
+          {
+            "node": "下載圖片",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Wait",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "取得圖片": {
+      "main": [
+        [
+          {
+            "node": "Switch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "發文": {
+      "main": [
+        [
+          {
+            "node": "更新文章列表",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "上傳圖片": {
+      "main": [
+        [
+          {
+            "node": "更新文章圖片",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "更新文章圖片": {
+      "main": [
+        [
+          {
+            "node": "更新文章RankMathSEO",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "更新文章列表": {
+      "main": [
+        [
+          {
+            "node": "生成文章精選圖片",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Message a model1": {
+      "main": [
+        [
+          {
+            "node": "解析Gemini 分解為json",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "更新文章圖片SEO": {
+      "main": [
+        [
+          {
+            "node": "抓取分類數量",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request1": {
+      "main": [
+        [
+          {
+            "node": "更新文章圖片SEO",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "抓取分類數量": {
+      "main": [
+        [
+          {
+            "node": "更新分類數量",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "更新分類數量": {
+      "main": [
+        [
+          {
+            "node": "寄信通知",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "找出各分類數量": {
+      "main": [
+        [
+          {
+            "node": "篩選文章數量最少",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "更新文章RankMathSEO": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "92f1de4d-5946-44f1-8178-a293c5e3aa60",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "4988b68f636ed9d5c0df5dabfe2f5ecd3d436361dbb1ad4ccdf3234eb322dafd"
+  },
+  "id": "ZzcJ1aVEdCqJhVAB",
+  "tags": []
+}
